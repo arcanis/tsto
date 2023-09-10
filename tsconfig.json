@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2022"],
+    "moduleResolution": "Node",
+    "noImplicitReturns": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "alwaysStrict": false,
+    "target": "ES2021",
+    "declaration": true,
+    "importHelpers": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "useUnknownInCatchVariables": false
+  }
+}

@@ -1,0 +1,11 @@
+{
+    "jsc": {
+        "externalHelpers": false,
+        "parser": {
+            "syntax": "typescript"
+        }
+    },
+    "module": {
+        "type": "commonjs"
+    }
+}

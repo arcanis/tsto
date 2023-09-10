@@ -1,0 +1,18 @@
+{
+  "name": "tsto++",
+  "version": "0.0.1",
+  "packageManager": "yarn@3.6.3",
+  "dependencies": {
+    "@swc/core": "^1.3.83",
+    "@swc/register": "^0.1.10",
+    "clipanion": "^4.0.0-rc.2",
+    "tslib": "^2.6.2",
+    "typescript": "^5.2.2"
+  },
+  "scripts": {
+    "tsto++": "node -r @swc/register ./index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.6.0"
+  }
+}

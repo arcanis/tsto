@@ -9,12 +9,45 @@ interface Object {}
 interface RegExp {}
 interface String {}
 
-/**
- * Represents a raw C++ type. The compiler will use this type as-is (without
- * adding any dependency towards its source!). The second type parameter is
- * used to fake a TS type for the return value (useful to preserve operators).
- */
-declare type Cpp<T extends string, TFake = {}> = TFake & {__cpp: T};
+namespace Cpp {
+    /**
+     * Represents a C++ pointer type.
+     */
+    export type Ptr<T> = number & {__cpp: `ptr`, __cpp_ptr: T};
+
+    /**
+     * Represents a raw `long long` value.
+     */
+    export type LL = number & {__cpp: `raw`, __cpp_raw: `long long`};
+
+    /**
+     * If declared within a class, must be set to `value` or `reference`.
+     * 
+     * The compiler will use this information to determine whether to pass
+     * the class instance by value or by reference when performing copies,
+     * like in function calls.
+     */
+    export declare const PassBy: unique symbol;
+}
+
+namespace Operator {
+    export declare const EqualEqual: unique symbol;
+    export declare const NotEqual: unique symbol;
+
+    export declare const LessThanEqual: unique symbol;
+    export declare const LessThan: unique symbol;
+
+    export declare const GreaterThanEqual: unique symbol;
+    export declare const GreaterThan: unique symbol;
+
+    export declare const Substract: unique symbol;
+    export declare const Add: unique symbol;
+    export declare const Multiply: unique symbol;
+    export declare const Divide: unique symbol;
+    export declare const Modulo: unique symbol;
+
+    export declare const Unref: unique symbol;
+}
 
 /**
  * If this statement is found inside a function, its literal string argument
@@ -28,39 +61,24 @@ declare const __cpp_top: <T extends string>(msg: [string] extends [T] ? never : 
  * If this statement is found inside a function, its literal string argument
  * will be extracted and insert inline within the current function.
  * 
- * @example __cpp(`std::cout << "Hello world!" << std::endl`);
+ * Note that it's a template tag, not a regular function - it means you can
+ * safely use it to interpolate values within the raw code.
+ * 
+ * @example __cpp `std::cout << "Hello world!" << std::endl`;
+ * @example __cpp `std::cout << "Hello ${name}!" << std::endl`;
  */
 declare const __cpp: ((msg: TemplateStringsArray, ...args: any[]) => any);
 
-declare const Cpp: {
-    readonly PassByValue: unique symbol;
-};
-
-declare const Operator: {
-    readonly EqualEqual: unique symbol;
-    readonly NotEqual: unique symbol;
-
-    readonly LessThanEqual: unique symbol;
-    readonly LessThan: unique symbol;
-
-    readonly GreaterThanEqual: unique symbol;
-    readonly GreaterThan: unique symbol;
-
-    readonly Substract: unique symbol;
-    readonly Add: unique symbol;
-    readonly Multiply: unique symbol;
-    readonly Divide: unique symbol;
-    readonly Modulo: unique symbol;
-
-    readonly Unref: unique symbol;
-};
-
+/**
+ * Represents an integer wrapper. The TsTo compiler will automatically convert
+ * all bigint literals into `Int` values.
+ */
 class Int {
-    declare [Cpp.PassByValue]: true;
+    declare [Cpp.PassBy]: `value`;
 
-    val: Cpp<`long long`, bigint>;
+    val: Cpp.LL;
 
-    constructor(val: Cpp<`long long`, bigint>) {
+    constructor(val: Cpp.LL) {
         this.val = val;
     }
 
@@ -112,7 +130,7 @@ class Int {
         return this.val % other.val;
     }
 
-    [Operator.Unref](): Cpp<`Int*`, BigInt> {
+    [Operator.Unref](): Cpp.Ptr<Int> {
         return __cpp `this`;
     }
 }

@@ -127,13 +127,12 @@ export function isTypeParameter(type: ts.Type): boolean {
     return !!(type.flags & ts.TypeFlags.TypeParameter);
 }
 
-export function getDeclarationFromReference(program: ts.Program, sourceFile: ts.SourceFile, reference: string): ts.Declaration | null {
+export function getSymbolFromReference(program: ts.Program, sourceFile: ts.SourceFile, reference: string): ts.Symbol | null {
     const typeChecker = program.getTypeChecker();
 
-    // Split the reference and walk through each segment, resolving the symbol as we go.
-    const segments = reference.split(`.`);
+    let currentSymbol: ts.Symbol | null = null;
 
-    let currentSymbol: ts.Symbol | undefined;
+    const segments = reference.split(`.`);
     for (const segment of segments) {
         if (!currentSymbol) {
             const exportedSymbols = typeChecker.getSymbolsInScope(sourceFile, ts.SymbolFlags.Value);
@@ -156,9 +155,9 @@ export function getDeclarationFromReference(program: ts.Program, sourceFile: ts.
         }
     }
 
-    if (!currentSymbol)
-        return null;
+    return currentSymbol;
+}
 
-    assertNodeNotUndefined(sourceFile, currentSymbol.valueDeclaration, `Expected current symbol to be linked to a declaration.`);
-    return currentSymbol.valueDeclaration;
+export function getDeclarationFromReference(program: ts.Program, sourceFile: ts.SourceFile, reference: string): ts.Declaration | null {
+    return getSymbolFromReference(program, sourceFile, reference)?.valueDeclaration ?? null;
 }

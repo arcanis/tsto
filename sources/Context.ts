@@ -140,6 +140,8 @@ function isTopLevelVariableDeclaration(node: ts.VariableDeclaration) {
 
 export class Context {
     units = new Map<ts.SourceFile, UnitContext>();
+
+    magics = new Map<ts.Symbol, (klass: Class, node: ts.Node, magicType: ts.Type | null) => void>();
     operators = new Map<ts.Declaration, string>();
 
     constructor(public program: ts.Program) {
@@ -147,6 +149,17 @@ export class Context {
 
         const sourceFile = this.program.getSourceFile(runtimePath);
         miscUtils.assertNotUndefined(sourceFile, `Expected the runtime to be loaded.`);
+
+        this.magics = new Map([
+            [miscUtils.assertReturn(miscUtils.getSymbolFromReference(this.program, sourceFile, `Cpp.PassBy`)), (klass, node, magicType) => {
+                miscUtils.assertNodeNotUndefined(node, magicType, `Expected the magic type to be defined.`);
+
+                miscUtils.assertNodeCheck(node, magicType.isStringLiteral(), `Expected the magic type to be a string literal.`);
+                miscUtils.assertNodeCheck(node, magicType.value === `reference` || magicType.value === `value`, `Expected the PassBy flag to be either "reference" or "value".`);
+
+                klass.passBy = magicType.value;
+            }],
+        ]);
 
         this.operators = new Map([
             [miscUtils.assertReturn(miscUtils.getDeclarationFromReference(this.program, sourceFile, `Operator.EqualEqual`)), `operator==`],
@@ -195,7 +208,7 @@ export class Context {
         if ((ts.isConstructorDeclaration(node) || ts.isMethodDeclaration(node)) && ts.isClassDeclaration(node.parent) && node.body)
             return this.getUnit(node.getSourceFile()).getClass(node.parent).getMethod(node);
 
-        if (ts.isPropertyDeclaration(node) && ts.isClassDeclaration(node.parent) && !node.name.getText().startsWith(`__cpp_`))
+        if (ts.isPropertyDeclaration(node) && ts.isClassDeclaration(node.parent) && ts.isIdentifier(node.name))
             return this.getUnit(node.getSourceFile()).getClass(node.parent).getProperty(node);
 
         return null;

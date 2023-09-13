@@ -47,16 +47,6 @@ export class Compiler {
         }
 
         if (type.isClass()) {
-            let passBy = `reference`;
-
-            const property = type.getProperty(`__cpp_model`);
-            if (property) {
-                const modelType = typeChecker.getTypeOfSymbol(property);
-                miscUtils.assertCheck(modelType.isStringLiteral(), `Expected __cpp_model to be a string literal.`);
-
-                passBy = modelType.value;
-            }
-
             const symbol = type.getSymbol();
             miscUtils.assertNotUndefined(symbol);
 
@@ -69,7 +59,7 @@ export class Compiler {
             this.unit.top.add(`#include <memory>`);
             this.unit.addDependency(klass.unit);
 
-            if (passBy === `reference`) {
+            if (klass.passBy === `reference`) {
                 return `std::shared_ptr<${symbol.name}>`;
             } else {
                 return symbol.name;
@@ -91,13 +81,30 @@ export class Compiler {
             return `${symbol.name}`;
         }
 
-        if (type.aliasSymbol?.escapedName === `Cpp`) {
-            const typeParameter = type.aliasTypeArguments?.[0];
+        const cppMeta = type.getProperty(`__cpp`);
+        if (cppMeta) {
+            const cppMetaType = typeChecker.getTypeOfSymbol(cppMeta);
+            miscUtils.assertCheck(cppMetaType.isStringLiteral(), `Expected the __cpp type to be a string literal.`);
 
-            miscUtils.assertNotUndefined(typeParameter);
-            miscUtils.assertCheck(typeParameter.isStringLiteral(), `Expected Cpp type parameter to be a string literal.`);
+            switch (cppMetaType.value) {
+                case `raw`: {
+                    const rawMeta = type.getProperty(`__cpp_raw`);
+                    miscUtils.assertNotUndefined(rawMeta, `Expected the __cpp_raw property to be defined.`);
 
-            return typeParameter.value;
+                    const rawMetaType = typeChecker.getTypeOfSymbol(rawMeta);
+                    miscUtils.assertCheck(rawMetaType.isStringLiteral(), `Expected the __cpp_raw type to be a string literal.`);
+
+                    return rawMetaType.value;
+                }
+
+                case `ptr`: {
+                    const ptrMeta = type.getProperty(`__cpp_ptr`);
+                    miscUtils.assertNotUndefined(ptrMeta, `Expected the __cpp_ptr property to be defined.`);
+
+                    const ptrMetaType = typeChecker.getTypeOfSymbol(ptrMeta);
+                    return `${this.compileType(ptrMetaType)}*`;
+                }
+            }
         }
 
         throw new Error(`Unsupported type ${typeChecker.typeToString(type)}.`);

@@ -6,6 +6,8 @@ import { Function } from "./Function";
 import { Property } from "./Property";
 
 export class Class extends Base {
+    passBy = `reference`;
+
     methods = new Map<ts.ConstructorDeclaration | ts.MethodDeclaration, Function>();
     properties = new Map<ts.PropertyDeclaration, Property>();
 
@@ -13,6 +15,33 @@ export class Class extends Base {
         super();
 
         miscUtils.assertNodeNotUndefined(this.node, this.node.name, `Expected class name to be defined.`);
+
+        const typeChecker = this.context.program.getTypeChecker();
+
+        for (const member of this.node.members) {
+            if (!ts.isPropertyDeclaration(member))
+                continue;
+
+            if (!ts.isComputedPropertyName(member.name))
+                continue;
+
+            const nameType = this.context.program.getTypeChecker()
+                .getTypeAtLocation(member.name.expression);
+
+            const nameSym = nameType.getSymbol();
+            if (!nameSym)
+                return;
+
+            const magic = this.context.magics.get(nameSym);
+            if (!magic)
+                continue;
+
+            const magicType = member.type
+                ? typeChecker.getTypeAtLocation(member.type)
+                : null;
+
+            magic(this, member, magicType);
+        }
     }
 
     getMethod(methodNode: ts.ConstructorDeclaration | ts.MethodDeclaration) {

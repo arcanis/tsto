@@ -1,7 +1,11 @@
-function fibonacci(n: bigint): bigint {
-    return n <= 1n ? 1n : fibonacci(n - 1n) + fibonacci(n - 2n);
+interface Foo {
+    foo: string;
+}
+
+function getFoo(value: Foo) {
+    return value.foo;
 }
 
 export function main() {
-    return console.log(10n);
+    console.log(getFoo({foo: "bar"}));
 }

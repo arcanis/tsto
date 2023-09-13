@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
     "lib": [],
+    "target": "ES2022",
     "types": []
   },
   "include": [
-    "example/**/*.ts"
+    "example/**/*.ts",
+    "runtime/**/*.ts"
   ]
 }

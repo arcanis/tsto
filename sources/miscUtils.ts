@@ -20,16 +20,35 @@ export function assertNode<T extends ts.Node>(val: ts.Node, is: (node: ts.Node) 
     }
 }
 
-export function assertNodeNotUndefined<T>(node: ts.Node, val: T | undefined, message: string = `Expected value to be defined.`): asserts val is T {
-    if (typeof val === `undefined`) {
+export function assertNodeCheck(node: ts.Node, val: boolean, message: string): asserts val {
+    if (!val) {
         throwNodeError(node, message);
     }
 }
 
-export function assertValue<T>(val: T | undefined, message: string = `Expected value to be defined.`): asserts val is T {
-    if (typeof val === `undefined`) {
+export function assertNodeNotUndefined<T>(node: ts.Node, val: T | null | undefined, message: string = `Expected value to be defined.`): asserts val is T {
+    assertNodeCheck(node, typeof val !== `undefined` && val !== null, message);
+}
+
+export function assertCheck(val: boolean, message: string = `Expected value to be defined.`): asserts val {
+    if (!val) {
         throw new Error(message);
     }
+}
+
+export function assertValue<TIn, TOut extends TIn>(val: TIn, check: (val: TIn) => val is TOut, message: string = `Expected value to be defined.`): asserts val is TOut {
+    if (!check(val)) {
+        throw new Error(message);
+    }
+}
+
+export function assertNotUndefined<T>(val: T | null | undefined, message: string = `Expected value to be defined.`): asserts val is T {
+    assertCheck(typeof val !== `undefined` && val !== null, message);
+}
+
+export function assertReturn<T>(val: T | null | undefined, message: string = `Expected value to be defined.`) {
+    assertNotUndefined(val, message);
+    return val;
 }
 
 export function visitNode<T>(val: ts.Node, fn: (node: ts.Node) => T) {
@@ -78,21 +97,68 @@ export function sortByMap<T>(values: Iterable<T>, mappers: ((value: T) => string
     });
 }
 
-export function getCommonPathPrefix(paths: string[]) {
-    let prefix = paths[0].split(path.sep);
-    prefix.pop();
+export function extractParts(node: ts.TaggedTemplateExpression) {
+    const quasis: string[] = [];
+    const expressions: ts.Expression[] = [];
 
-    for (let t = 1; t < paths.length; t++) {
-        const parts = paths[t].split(path.sep);
-        parts.pop();
+    if (ts.isTemplateExpression(node.template)) {
+        quasis.push(node.template.head.text);
 
-        for (let i = 0; i < prefix.length; i++) {
-            if (prefix[i] !== parts[i]) {
-                prefix = prefix.slice(0, i);
-                break;
-            }
+        for (const span of node.template.templateSpans) {
+            expressions.push(span.expression);
+            quasis.push(span.literal.text);
+        }
+    } else if (ts.isNoSubstitutionTemplateLiteral(node.template)) {
+        quasis.push(node.template.text);
+    }
+
+    return {quasis, expressions};
+}
+
+export function isArrayType(typeChecker: ts.TypeChecker, ty: ts.Type): ty is ts.TypeReference {
+    return typeChecker.isArrayType(ty);
+}
+
+export function isTypeReference(ty: ts.Type): ty is ts.TypeReference {
+    return 'typeArguments' in ty;
+}
+
+export function isTypeParameter(type: ts.Type): boolean {
+    return !!(type.flags & ts.TypeFlags.TypeParameter);
+}
+
+export function getDeclarationFromReference(program: ts.Program, sourceFile: ts.SourceFile, reference: string): ts.Declaration | null {
+    const typeChecker = program.getTypeChecker();
+
+    // Split the reference and walk through each segment, resolving the symbol as we go.
+    const segments = reference.split(`.`);
+
+    let currentSymbol: ts.Symbol | undefined;
+    for (const segment of segments) {
+        if (!currentSymbol) {
+            const exportedSymbols = typeChecker.getSymbolsInScope(sourceFile, ts.SymbolFlags.Value);
+            if (!exportedSymbols)
+                return null;
+
+            const requestedSymbol = exportedSymbols.find(s => s.name === segment);
+            if (!requestedSymbol)
+                return null;
+
+            currentSymbol = requestedSymbol;
+        } else {
+            const typeOfSymbol = typeChecker.getTypeOfSymbol(currentSymbol);
+
+            const requestedSymbol = typeOfSymbol.getProperty(segment);
+            if (!requestedSymbol)
+                return null;
+
+            currentSymbol = requestedSymbol;
         }
     }
 
-    return prefix.join(path.sep);
+    if (!currentSymbol)
+        return null;
+
+    assertNodeNotUndefined(sourceFile, currentSymbol.valueDeclaration, `Expected current symbol to be linked to a declaration.`);
+    return currentSymbol.valueDeclaration;
 }

@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "lib": [],
+    "types": [],
+  },
+  "references": [
+    {"path": "../runtime/tsconfig.json"},
+  ],
+}

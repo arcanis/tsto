@@ -1,17 +1,128 @@
 import * as ts from "typescript";
-import { Context } from "./Context";
+import { Context, UnitContext } from "./Context";
 import * as miscUtils from "./miscUtils";
+import path from "path";
+import { Class } from "./tsto/Class";
 
 export class Compiler {
-    constructor(public context: Context) {
+    constructor(public context: Context, public unit: UnitContext) {
     }
 
-    compile(stmt: ts.Statement) {
+    getStringType() {
+        this.unit.top.add(`#include <string>`);
+        return `std::string`;
+    }
+
+    compileType(type: ts.Type): string {
+        const typeChecker = this.context.program.getTypeChecker();
+
+        if (miscUtils.isTypeParameter(type))
+            return type.symbol.name;
+
+        if (type === typeChecker.getBigIntType()) {
+            this.unit.addRuntimeDependency(`Int`, Class);
+            return `Int`;
+        }
+
+        if (type === typeChecker.getNumberType())
+            return `double`;
+        if (type === typeChecker.getStringType())
+            return this.getStringType();
+        if (type === typeChecker.getBooleanType())
+            return `bool`;
+        if (type === typeChecker.getVoidType())
+            return `void`;
+
+        if (miscUtils.isArrayType(typeChecker, type))
+            return `Array<${this.compileType(type.typeArguments![0])}>`;
+
+        if (type.isUnion()) {
+            if (type.types.length === 2) {
+                const [a, b] = type.types;
+                if (a === typeChecker.getUndefinedType() || b === typeChecker.getUndefinedType()) {
+                    const other = a === typeChecker.getUndefinedType() ? b : a;
+                    return `std::optional<${this.compileType(other)}>`;
+                }
+            }
+        }
+
+        if (type.isClass()) {
+            let passBy = `reference`;
+
+            const property = type.getProperty(`__cpp_model`);
+            if (property) {
+                const modelType = typeChecker.getTypeOfSymbol(property);
+                miscUtils.assertCheck(modelType.isStringLiteral(), `Expected __cpp_model to be a string literal.`);
+
+                passBy = modelType.value;
+            }
+
+            const symbol = type.getSymbol();
+            miscUtils.assertNotUndefined(symbol);
+
+            const decl = symbol.declarations!.find((decl): decl is ts.ClassDeclaration => ts.isClassDeclaration(decl));
+            miscUtils.assertNotUndefined(decl);
+
+            const klass = this.context.getUnit(decl.getSourceFile())
+                .getClass(decl);
+
+            this.unit.top.add(`#include <memory>`);
+            this.unit.addDependency(klass.unit);
+
+            if (passBy === `reference`) {
+                return `std::shared_ptr<${symbol.name}>`;
+            } else {
+                return symbol.name;
+            }
+        }
+
+        if (type.isClassOrInterface()) {
+            const symbol = type.getSymbol();
+            miscUtils.assertNotUndefined(symbol);
+
+            const decl = symbol.declarations!.find((decl): decl is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(decl));
+            miscUtils.assertNotUndefined(decl);
+
+            const struct = this.context.getUnit(decl.getSourceFile())
+                .getStruct(decl);
+
+            this.unit.addDependency(struct.unit);
+
+            return `${symbol.name}`;
+        }
+
+        if (type.aliasSymbol?.escapedName === `Cpp`) {
+            const typeParameter = type.aliasTypeArguments?.[0];
+
+            miscUtils.assertNotUndefined(typeParameter);
+            miscUtils.assertCheck(typeParameter.isStringLiteral(), `Expected Cpp type parameter to be a string literal.`);
+
+            return typeParameter.value;
+        }
+
+        throw new Error(`Unsupported type ${typeChecker.typeToString(type)}.`);
+    }
+
+    compileStatements(statements: ts.NodeArray<ts.Statement>) {
+        let result = ``;
+
+        for (const statement of statements)
+            result += this.compileStatement(statement);
+
+        return result;
+    }
+
+    compileStatement(stmt: ts.Statement) {
         if (ts.isVariableStatement(stmt))
             return this.compileVariableStatement(stmt);
 
         if (ts.isReturnStatement(stmt))
             return this.compileReturnStatement(stmt);
+
+        if (ts.isExpressionStatement(stmt)) {
+            const result = this.compileExpression(stmt.expression);
+            return result ? `${result};\n` : ``;
+        }
 
         miscUtils.throwNodeError(stmt, `Unsupported statement type ${ts.SyntaxKind[stmt.kind]}.`);
     }
@@ -21,10 +132,10 @@ export class Compiler {
 
         for (const decl of node.declarationList.declarations) {
             const type = this.context.program.getTypeChecker()
-                .getTypeAtLocation(decl);
+                .getTypeAtLocation(decl.name);
 
             const name = decl.name.getText();
-            const compiledType = this.context.compileType(type);
+            const compiledType = this.compileType(type);
 
             result += decl.initializer
                 ? `${compiledType} ${name} = ${this.compileExpression(decl.initializer)};\n`
@@ -44,16 +155,13 @@ export class Compiler {
 
     compileExpression(node: ts.Expression): string {
         if (ts.isBigIntLiteral(node))
-            return `${node.getText().slice(0, -1)}ULL`;
+            return this.compileBigIntLiteral(node);
 
         if (ts.isNumericLiteral(node))
             return `${Number(node.getText()).toExponential()}`;
 
-        if (ts.isStringLiteral(node))
-            return `std::string("${node.getText().slice(1, -1)}")`;
-
-        if (ts.isNoSubstitutionTemplateLiteral(node))
-            return `std::string("${node.getText().slice(1, -1)}")`;
+        if (ts.isStringLiteralLike(node))
+            return `${this.getStringType()}("${node.text}")`;
 
         if (ts.isPropertyAccessExpression(node))
             return this.compilePropertyAccessExpression(node);
@@ -73,10 +181,32 @@ export class Compiler {
         if (ts.isIdentifier(node))
             return this.compileIdentifier(node);
 
+        if (ts.isTaggedTemplateExpression(node))
+            return this.compileTaggedTemplateExpression(node);
+
+        if (ts.isObjectLiteralExpression(node))
+            return this.compileObjectLiteralExpression(node);
+
+        if (ts.isArrayLiteralExpression(node))
+            return this.compileArrayLiteralExpression(node);
+
+        if (node.kind === ts.SyntaxKind.ThisKeyword)
+            return `(*this)`;
+
         miscUtils.throwNodeError(node, `Unsupported expression type ${ts.SyntaxKind[node.kind]}.`);
     }
 
+    private compileBigIntLiteral(node: ts.BigIntLiteral) {
+        this.unit.addRuntimeDependency(`Int`, Class)
+            .activateAll();
+
+        return `Int(${node.getText().slice(0, -1)}LL)`;
+    }
+
     private compileBinaryExpression(node: ts.BinaryExpression) {
+        if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+            return `${this.compileExpression(node.left)} = ${this.compileExpression(node.right)}`;
+
         if (node.operatorToken.kind === ts.SyntaxKind.PlusToken)
             return `${this.compileExpression(node.left)} + ${this.compileExpression(node.right)}`;
 
@@ -88,6 +218,9 @@ export class Compiler {
 
         if (node.operatorToken.kind === ts.SyntaxKind.SlashToken)
             return `${this.compileExpression(node.left)} / ${this.compileExpression(node.right)}`;
+
+        if (node.operatorToken.kind === ts.SyntaxKind.PercentToken)
+            return `${this.compileExpression(node.left)} % ${this.compileExpression(node.right)}`;
 
         if (node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken)
             return `${this.compileExpression(node.left)} == ${this.compileExpression(node.right)}`;
@@ -117,7 +250,10 @@ export class Compiler {
     }
 
     private compileCallExpression(node: ts.CallExpression) {
-        this.context.activate(node.expression);
+        if (ts.isIdentifier(node.expression) && node.expression.getText() === `__cpp_top`)
+            return this.compileCppTopCallExpression(node);
+
+        this.unit.activateWithDependency(node.expression);
 
         const args = node.arguments
             .map(arg => this.compileExpression(arg))
@@ -126,16 +262,47 @@ export class Compiler {
         return `${this.compileExpression(node.expression)}(${args})`;
     }
 
+    private compileCppTopCallExpression(node: ts.CallExpression) {
+        miscUtils.assertNode(node.parent, ts.isExpressionStatement);
+        miscUtils.assertNodeCheck(node, node.arguments.length === 1, `Expected C++ top call to have exactly one argument.`);
+
+        if (!ts.isStringLiteral(node.arguments[0]) && !ts.isNoSubstitutionTemplateLiteral(node.arguments[0]))
+            miscUtils.assertNode(node.arguments[0], ts.isStringLiteral);
+
+        this.unit.top.add(node.arguments[0].text);
+
+        return ``;
+    }
+
     private compileNewExpression(node: ts.NewExpression) {
         miscUtils.assertNode(node.expression, ts.isIdentifier);
 
-        this.context.activate(node.expression);
+        this.unit.activateWithDependency(node.expression);
 
         const args = node.arguments ?? []
             .map(arg => this.compileExpression(arg))
             .join(`, `);
 
         return `std::make_shared<${node.expression.text}>(${args})`;
+    }
+
+    private compileTaggedTemplateExpression(node: ts.TaggedTemplateExpression) {
+        if (ts.isIdentifier(node.tag) && node.tag.getText() === `__cpp`)
+            return this.compileCppTaggedTemplateExpression(node);
+
+        miscUtils.throwNodeError(node, `Unsupported tagged template tag ${ts.SyntaxKind[node.tag.kind]}.`);
+    }
+
+    private compileCppTaggedTemplateExpression(node: ts.TaggedTemplateExpression) {
+        const {quasis, expressions} = miscUtils.extractParts(node);
+
+        let result = quasis[0];
+        for (let t = 0; t < expressions.length; t++) {
+            result += this.compileExpression(expressions[t]);
+            result += quasis[t + 1];
+        }
+
+        return result;
     }
 
     private compileConditionalExpression(node: ts.ConditionalExpression) {
@@ -145,12 +312,67 @@ export class Compiler {
         return `${this.compileExpression(node.condition)}\n  ? ${whenTrue}\n  : ${whenFalse}\n`;
     }
 
+    private compileObjectLiteralExpression(node: ts.ObjectLiteralExpression) {
+        const type = this.context.program.getTypeChecker()
+            .getContextualType(node);
+
+        miscUtils.assertNodeNotUndefined(node, type, `Expected object literal to have a contextual type.`);
+
+        const compiledType = this.compileType(type);
+
+        let result = `${compiledType} {\n`;
+
+        for (const prop of node.properties) {
+            miscUtils.assertNode(prop, ts.isPropertyAssignment);
+            result += `  .${prop.name.getText()} = ${this.compileExpression(prop.initializer)},\n`;
+        }
+
+        result += `}`;
+
+        return result;
+    }
+
     private compilePropertyAccessExpression(node: ts.PropertyAccessExpression) {
-        return `${this.compileExpression(node.expression)}.${node.name.getText()}`;
+        if (node.expression.kind === ts.SyntaxKind.ThisKeyword)
+            return `(*this)->${node.name.getText()}`;
+
+        const typeChecker = this.context.program.getTypeChecker();
+        const type = typeChecker
+            .getTypeAtLocation(node.expression);
+
+        const symbol = type.getSymbol();
+        miscUtils.assertNodeNotUndefined(node, symbol, `Expected property access expression to have a symbol.`);
+
+        if (type.isClass())
+            return `${this.compileExpression(node.expression)}->${node.name.getText()}`;
+
+        if (type.isClassOrInterface())
+            return `${this.compileExpression(node.expression)}.${node.name.getText()}`;
+
+        if (typeChecker.isArrayType(type))
+            return `${this.compileExpression(node.expression)}->${node.name.getText()}`;
+
+        miscUtils.throwNodeError(node, `Unsupported property access expression type ${typeChecker.typeToString(type)}.`);
+    }
+
+    private compileArrayLiteralExpression(node: ts.ArrayLiteralExpression) {
+        const typeChecker = this.context.program.getTypeChecker();
+        const type = typeChecker.getContextualType(node) ?? typeChecker.getTypeAtLocation(node);
+
+        miscUtils.assertNodeNotUndefined(node, type, `Expected array literal to have a type.`);
+
+        if (!miscUtils.isArrayType(typeChecker, type))
+            miscUtils.throwNodeError(node, `Expected array literal to have an array type.`);
+
+        miscUtils.assertNodeNotUndefined(node, type.typeArguments?.[0], `Expected array literal to have type arguments.`);
+
+        this.unit.addRuntimeDependency(`Array.prototype.push`);
+
+        return `Array<${this.compileType(type.typeArguments[0])}> {}`;
     }
 
     private compileIdentifier(node: ts.Identifier) {
-        this.context.activate(node);
+        this.unit.activateWithDependency(node);
 
         return node.getText();
     }

@@ -1,9 +1,9 @@
 import * as ts from 'typescript';
-import { Context } from '../Context';
+import { Context, UnitContext } from '../Context';
 import { Base } from './Base';
 
 export class Global extends Base {
-    constructor(public context: Context, public node: ts.VariableDeclaration) {
+    constructor(public context: Context, public unit: UnitContext, public node: ts.VariableDeclaration) {
         super();
     }
 
@@ -11,8 +11,8 @@ export class Global extends Base {
         const type = this.context.program.getTypeChecker()
             .getTypeAtLocation(this.node);
 
-        const compiledType = this.context.compileType(type);
-        return `${compiledType}\n  ${this.node.name.getText()};\n`;
+        const compiledType = this.unit.compiler.compileType(type);
+        return `extern ${compiledType}\n  ${this.node.name.getText()};\n`;
     }
 
     generate() {
@@ -22,8 +22,8 @@ export class Global extends Base {
         const type = this.context.program.getTypeChecker()
             .getTypeAtLocation(this.node);
 
-        const compiledType = this.context.compileType(type);
-        const compiledInitializer = this.context.compiler.compileExpression(this.node.initializer);
+        const compiledType = this.unit.compiler.compileType(type);
+        const compiledInitializer = this.unit.compiler.compileExpression(this.node.initializer);
 
         return `${compiledType}\n  ${this.node.name.getText()} = ${compiledInitializer};\n`;
     }

@@ -1,3 +1,4 @@
+import cp from 'child_process';
 import {Command, Option, runExit} from 'clipanion';
 import fs from 'fs';
 import path, { parse } from 'path';
@@ -17,7 +18,8 @@ runExit(class extends Command {
     entry = Option.String();
 
     async execute() {
-        await this.generate();
+        const files = await this.generate();
+        await this.compile(files);
     }
 
     async generate() {
@@ -34,12 +36,19 @@ runExit(class extends Command {
             throw new Error(ts.formatDiagnostic(parseResult.errors[0], formatDiagnosticHost));
 
         const resolved = path.resolve(this.entry);
-        const runtime = path.resolve(__dirname, `./sources/runtime.ts`);
+        const runtime = path.resolve(__dirname, `./runtime/runtime.ts`);
 
         const program = ts.createProgram([resolved, runtime], parseResult.options);
+        const errors = ts.getPreEmitDiagnostics(program);
+
+        if (errors.length > 0) {
+            for (const error of errors)
+                console.error(ts.formatDiagnostic(error, formatDiagnosticHost));
+            return [];
+        }
         
         const entryFile = program.getSourceFile(resolved);
-        miscUtils.assertValue(entryFile);
+        miscUtils.assertNotUndefined(entryFile);
 
         const functionDeclarations = entryFile.statements.filter(ts.isFunctionDeclaration);
 
@@ -56,17 +65,18 @@ runExit(class extends Command {
         const rootDir = path.resolve(tsconfigRoot, parseResult.options.rootDir ?? `.`);
         const outDir = path.resolve(tsconfigRoot, parseResult.options.outDir ?? `dist`);
     
-        const context = new Context(program, rootDir);
+        const context = new Context(program);
         const main = context.getUnit(entryFile)
             .getFunction(mainFunction);
 
         main.isMain = true;
-        main.generate();
+        main.generateDefinition();
 
         const okFolders = new Set<string>();
+        const production: string[] = [];
 
         for (const unit of context.units.values()) {
-            const relPath = unit.getRelativePath();
+            const relPath = path.relative(rootDir, unit.absolutePath);
             if (relPath.startsWith(`..${path.sep}`))
                 continue;
 
@@ -81,6 +91,19 @@ runExit(class extends Command {
 
             const sourcePath = path.resolve(outDir, relPath + `.cpp`);
             fs.writeFileSync(sourcePath, unit.generateSource());
+
+            production.push(sourcePath);
         }
+
+        return production;
+    }
+
+    async compile(files: string[]) {
+        cp.execFileSync(`clang++`, [
+            `-std=c++20`,
+            ...files,
+        ], {
+            stdio: `inherit`,
+        });
     }
 });

@@ -1,6 +1,7 @@
 {
     "jsc": {
         "externalHelpers": false,
+        "target": "es2022",
         "parser": {
             "syntax": "typescript"
         }

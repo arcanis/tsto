@@ -14,5 +14,10 @@
   },
   "devDependencies": {
     "@types/node": "^20.6.0"
+  },
+  "dependenciesMeta": {
+    "typescript@5.2.2": {
+      "unplugged": true
+    }
   }
 }
